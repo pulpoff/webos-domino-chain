@@ -24,7 +24,8 @@ Taken on the LG C1 at 1080p.
 
 - **Remote:**
   - the arrows walk, climb ladders and go through doors;
-  - OK picks up, puts down and pushes a domino, and chooses in the menus;
+  - OK picks up and puts down a domino, and chooses in the menus;
+  - to push a domino, walk up to it facing it and press Up, so the ant steps up to it; then OK pushes it the way the ant faces. A keyboard or game controller can also push with a direction plus Space/Cross, as the game's tutorial says;
   - Back opens the level's menu and goes back in the menus;
   - the red button shows the level's help.
 - **Game controller:**
@@ -93,7 +94,7 @@ To install a build by hand as root on the TV:
 
 ```sh
 luna-send -i -f luna://com.webos.appInstallService/dev/install \
-  '{"id":"com.pulp.dominochain","ipkUrl":"/tmp/com.pulp.dominochain_0.2.0_all.ipk","subscribe":true}'
+  '{"id":"com.pulp.dominochain","ipkUrl":"/tmp/com.pulp.dominochain_0.2.1_all.ipk","subscribe":true}'
 ```
 
 ## License

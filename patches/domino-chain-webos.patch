@@ -1,5 +1,5 @@
 diff --git a/src/domino-chain/figure.cpp b/src/domino-chain/figure.cpp
-index 8d87065..8c1c193 100644
+index 8d87065..773bf8e 100644
 --- a/src/domino-chain/figure.cpp
 +++ b/src/domino-chain/figure.cpp
 @@ -19,6 +19,7 @@
@@ -10,7 +10,26 @@ index 8d87065..8c1c193 100644
  #include "figure.h"
  
  #include "soundsys.h"
-@@ -1768,6 +1769,14 @@ unsigned int getKeyMask(void) {
+@@ -1228,6 +1229,18 @@ FigureAnimationState figure_c::SFNextAction(unsigned int keyMask) {
+   animationImage = 0;
+   FigureAnimationState returnState;
+ 
++#ifdef WEBOS
++  // The remote's arrows ring its OK button, so they can't be pressed together. Standing at a
++  // domino (Up beside it), OK alone pushes it the way the figure faces.
++  if ((keyMask & (KEY_ACTION | KEY_LEFT | KEY_RIGHT | KEY_UP | KEY_DOWN)) == KEY_ACTION)
++  {
++    if (animation == FigureAnimPushLeft)
++      keyMask |= KEY_LEFT;
++    else if (animation == FigureAnimPushRight)
++      keyMask |= KEY_RIGHT;
++  }
++#endif
++
+   // is true, when the figure is on a ladder
+   bool onLadder = (animation >= FigureAnimLadder1 && animation <= FigureAnimLadder4) ||
+                   (animation >= FigureAnimCarryLadder1 && animation <= FigureAnimCarryLadder4);
+@@ -1768,6 +1781,14 @@ unsigned int getKeyMask(void) {
    if ( keystate[SDL_SCANCODE_LEFT] ) keyMask |= KEY_LEFT;
    if ( keystate[SDL_SCANCODE_RIGHT] ) keyMask |= KEY_RIGHT;
    if ( keystate[SDL_SCANCODE_SPACE] ) keyMask |= KEY_ACTION;
