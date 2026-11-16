@@ -1,6 +1,8 @@
 # Domino-Chain for LG webOS
 
-[Domino-Chain](https://domino-chain.gitlab.io), the open-source puzzle game in which a row of dominoes must topple with one push, built as a native webOS app (`com.pulp.dominochain`). It ships with the game's own level sets: the tutorial and the A&V levels. The figure is redrawn as an ant in a hard hat. It was developed and tested on an LG C1 running webOS 6.5.3.
+[Domino-Chain](https://domino-chain.gitlab.io), the open-source puzzle game in which a row of dominoes must topple with one push, built as a native webOS app (`com.pulp.dominochain`). 
+It is a clone of Amiga [Push Over](https://en.wikipedia.org/wiki/Push-Over_(video_game))
+It ships with the game's own level sets: the tutorial and the A&V levels. The figure is redrawn as an ant in a hard hat. It was developed and tested on an LG C1 running webOS 6.5.3.
 
 ## Screenshots
 
