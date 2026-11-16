@@ -1,0 +1,13 @@
+{
+  "id": "com.pulp.dominochain",
+  "version": "0.2.0",
+  "vendor": "Pulp",
+  "type": "native",
+  "main": "domino-chain",
+  "title": "Domino-Chain",
+  "icon": "icon.png",
+  "largeIcon": "largeIcon.png",
+  "iconColor": "#2a2a34",
+  "useAllKeyboardKeys": true,
+  "cloudgame_active": true
+}

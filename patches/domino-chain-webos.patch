@@ -1,0 +1,652 @@
+diff --git a/src/domino-chain/figure.cpp b/src/domino-chain/figure.cpp
+index 8d87065..8c1c193 100644
+--- a/src/domino-chain/figure.cpp
++++ b/src/domino-chain/figure.cpp
+@@ -19,6 +19,7 @@
+  * 51 Franklin Street, Fifth Floor, Boston, MA 02110-1335 USA
+  */
+ 
++#include "webos.h"
+ #include "figure.h"
+ 
+ #include "soundsys.h"
+@@ -1768,6 +1769,14 @@ unsigned int getKeyMask(void) {
+   if ( keystate[SDL_SCANCODE_LEFT] ) keyMask |= KEY_LEFT;
+   if ( keystate[SDL_SCANCODE_RIGHT] ) keyMask |= KEY_RIGHT;
+   if ( keystate[SDL_SCANCODE_SPACE] ) keyMask |= KEY_ACTION;
++#ifdef WEBOS
++  // the game controller (webos.cpp), and the remote's OK button (Return) for Space
++  if ( webOSPadHeld(SDL_SCANCODE_UP) ) keyMask |= KEY_UP;
++  if ( webOSPadHeld(SDL_SCANCODE_DOWN) ) keyMask |= KEY_DOWN;
++  if ( webOSPadHeld(SDL_SCANCODE_LEFT) ) keyMask |= KEY_LEFT;
++  if ( webOSPadHeld(SDL_SCANCODE_RIGHT) ) keyMask |= KEY_RIGHT;
++  if ( keystate[SDL_SCANCODE_RETURN] || webOSPadHeld(SDL_SCANCODE_RETURN) ) keyMask |= KEY_ACTION;
++#endif
+ 
+   return keyMask;
+ }
+diff --git a/src/domino-chain/graphicsn.cpp b/src/domino-chain/graphicsn.cpp
+index 4c65315..82c8699 100644
+--- a/src/domino-chain/graphicsn.cpp
++++ b/src/domino-chain/graphicsn.cpp
+@@ -36,7 +36,7 @@
+ 
+ #include <assert.h>
+ 
+-#include <boost/filesystem.hpp>
++#include <filesystem>
+ 
+ // the following array contains the y offset to use for the different
+ // images of the different figure animation images
+@@ -314,7 +314,7 @@ graphicsN_c::graphicsN_c(const std::string & path) : dataPath(path) {
+     // constant care
+     std::string figurefile;
+ 
+-    if (boost::filesystem::exists(getHome() + "figure.png"))
++    if (std::filesystem::exists(getHome() + "figure.png"))
+       figurefile = getHome() + "figure.png";
+     else
+       figurefile = dataPath+"/images/figure.png";
+diff --git a/src/domino-chain/main.cpp b/src/domino-chain/main.cpp
+index a7092c5..8739c87 100644
+--- a/src/domino-chain/main.cpp
++++ b/src/domino-chain/main.cpp
+@@ -30,6 +30,8 @@
+ #include "tools.h"
+ #include "editor.h"
+ 
++#include "webos.h"
++
+ #include <SDL.h>
+ 
+ #include <fstream>
+@@ -91,6 +93,13 @@ typedef enum {
+ 
+ int main(int argc, char * argv[]) {
+ 
++#ifdef WEBOS
++  webOSInit();
++  // the app manager's launch parameters (JSON) are no level file
++  if (argc == 2 && argv[1][0] == '{')
++    argc = 1;
++#endif
++
+   // directories
+   const std::string datadir = getDataDir();
+   const std::string pkgdatadir = datadir+"/domino-chain";
+@@ -121,6 +130,9 @@ int main(int argc, char * argv[]) {
+   // initialize SDL, graphics, timer, video mode, and level data structure
+   SDL_Init(SDL_INIT_TIMER);
+   SDL_Init(SDL_INIT_VIDEO);
++#ifdef WEBOS
++  webOSInitSDL();
++#endif
+ 
+   atexit(SDL_Quit);
+   graphicsN_c gr(pkgdatadir);
+@@ -220,6 +232,7 @@ int main(int argc, char * argv[]) {
+     else
+     {
+       nextState = ST_PROFILE_INIT;
++      gr.setPaintData(0, 0, &screen);
+     }
+   }
+   else
+@@ -261,6 +274,14 @@ int main(int argc, char * argv[]) {
+           SDL_Delay(ticks-SDL_GetTicks());
+       }
+ 
++#ifdef WEBOS
++      webOSPoll();
++
++      // in the background (the remote's Home button), a level waits in its menu, as with Escape
++      if (webOSInBackground() && currentState == ST_PLAY && nextState == ST_PLAY)
++        nextState = ST_QUIT;
++#endif
++
+       while (true) {
+ 
+         if (nextState != currentState) {
+@@ -1039,6 +1060,13 @@ int main(int argc, char * argv[]) {
+ 
+   catch (...) {
+ 
++#ifdef WEBOS
++    // say why the game ends, in the log
++    try { throw; }
++    catch (std::exception & e) { std::cout << "webOS: the game stops: " << e.what() << std::endl; }
++    catch (...) { std::cout << "webOS: the game stops on an exception" << std::endl; }
++#endif
++
+     if (currentState == ST_PLAY)
+       rec.save("err");
+ 
+diff --git a/src/domino-chain/screen.cpp b/src/domino-chain/screen.cpp
+index 3348470..e317e79 100644
+--- a/src/domino-chain/screen.cpp
++++ b/src/domino-chain/screen.cpp
+@@ -38,14 +38,44 @@
+ 
+ #include <assert.h>
+ 
++#ifdef WEBOS
++// The TV's GPU draws the screen, and a GPU renderer keeps no picture between frames, while the
++// game updates parts of it: the picture is kept in a texture, which the flips update in parts and
++// then show whole, scaled to the screen.
++static SDL_Texture * front = NULL;
++
++static void beginFlip(SDL_Renderer * renderer)
++{
++  SDL_SetRenderTarget(renderer, front);
++}
++
++static void endFlip(SDL_Renderer * renderer)
++{
++  SDL_SetRenderTarget(renderer, NULL);
++  SDL_RenderClear(renderer);
++  SDL_RenderCopy(renderer, front, NULL, NULL);
++  SDL_RenderPresent(renderer);
++}
++#endif
++
++
+ screen_c::screen_c(const graphicsN_c & g) :
+   animationState(0), blockX(g.blockX()), blockY(g.blockY())
+ {
+   SDL_SetHint(SDL_HINT_RENDER_SCALE_QUALITY, "linear");
++#ifdef WEBOS
++  SDL_CreateWindowAndRenderer(g.resolutionX(), g.resolutionY(), SDL_WINDOW_FULLSCREEN_DESKTOP, &sdlWindow, &sdlRenderer);
++  SDL_RenderSetLogicalSize(sdlRenderer, g.resolutionX(), g.resolutionY());
++  front = SDL_CreateTexture(sdlRenderer, SDL_PIXELFORMAT_ARGB8888, SDL_TEXTUREACCESS_TARGET, g.resolutionX(), g.resolutionY());
++  SDL_SetRenderTarget(sdlRenderer, front);
++  SDL_RenderClear(sdlRenderer);
++  SDL_SetRenderTarget(sdlRenderer, NULL);
++#else
+   // Workaround for https://gitlab.com/domino-chain/domino-chain.gitlab.io/-/work_items/20
+   SDL_SetHint(SDL_HINT_RENDER_DRIVER, "software");
+   SDL_CreateWindowAndRenderer(g.resolutionX(), g.resolutionY(), 0, &sdlWindow, &sdlRenderer);
+   SDL_RenderSetLogicalSize(sdlRenderer, g.resolutionX(), g.resolutionY());
++#endif
+ 
+   sdlTexture = SDL_CreateTexture(sdlRenderer, SDL_PIXELFORMAT_ARGB8888, SDL_TEXTUREACCESS_STREAMING, g.resolutionX(), g.resolutionY());
+ 
+@@ -68,6 +98,11 @@ surface_c::~surface_c(void)
+ 
+ void screen_c::toggleFullscreen(void)
+ {
++#ifdef WEBOS
++  // always the whole screen
++  flipComplete();
++  return;
++#endif
+   if (fullscreen_active)
+   {
+       SDL_SetWindowFullscreen(sdlWindow, 0);
+@@ -199,13 +234,22 @@ void screen_c::flipComplete(void)
+   animationState = 0;
+ 
+   SDL_UpdateTexture(sdlTexture, NULL, video->pixels, video->pitch);
++#ifdef WEBOS
++  beginFlip(sdlRenderer);
++  SDL_RenderCopy(sdlRenderer, sdlTexture, NULL, NULL);
++  endFlip(sdlRenderer);
++#else
+   SDL_RenderCopy(sdlRenderer, sdlTexture, NULL, NULL);
+   SDL_RenderPresent(sdlRenderer);
++#endif
+ }
+ 
+ void screen_c::flipDirty(const bitfield_c & dirty)
+ {
+   SDL_UpdateTexture(sdlTexture, NULL, video->pixels, video->pitch);
++#ifdef WEBOS
++  beginFlip(sdlRenderer);
++#endif
+ 
+   for (int y = 0; y < 25; y++)
+   {
+@@ -234,7 +278,11 @@ void screen_c::flipDirty(const bitfield_c & dirty)
+       }
+     }
+   }
++#ifdef WEBOS
++  endFlip(sdlRenderer);
++#else
+   SDL_RenderPresent(sdlRenderer);
++#endif
+   animationState = 0;
+ }
+ 
+@@ -633,11 +681,18 @@ bool screen_c::flipAnimate(void)
+   }
+ 
+   SDL_UpdateTexture(sdlTexture, NULL, video->pixels, video->pitch);
++#ifdef WEBOS
++  beginFlip(sdlRenderer);
++#endif
+   for (int i = 0; i < count; i++)
+   {
+       SDL_RenderCopy(sdlRenderer, sdlTexture, &rects[i], &rects[i]);
+   }
++#ifdef WEBOS
++  endFlip(sdlRenderer);
++#else
+   SDL_RenderPresent(sdlRenderer);
++#endif
+ 
+   if (animationState == 64)
+   {
+diff --git a/src/domino-chain/tools.cpp b/src/domino-chain/tools.cpp
+index 0eaa592..7cba6b2 100644
+--- a/src/domino-chain/tools.cpp
++++ b/src/domino-chain/tools.cpp
+@@ -46,7 +46,8 @@
+ 
+ #include <stdexcept>
+ 
+-#include <boost/filesystem.hpp>
++#include <algorithm>
++#include <filesystem>
+ 
+ uint64_t getTime(void)
+ {
+@@ -160,19 +161,19 @@ std::vector<std::string> sortedDirectoryEntries(const std::string & path) {
+ 
+ std::string findFileInDirectory(const std::string & path, const std::string name, uint16_t depth)
+ {
+-  boost::filesystem::path p (path);   // p reads clearer than argv[1] in the following code
++  std::filesystem::path p (path);   // p reads clearer than argv[1] in the following code
+ 
+   if (depth > 0)
+   {
+-    if (boost::filesystem::exists(p))
++    if (std::filesystem::exists(p))
+     {
+-      if (boost::filesystem::is_regular_file(p) && p.filename() == name)
++      if (std::filesystem::is_regular_file(p) && p.filename() == name)
+       {
+         return p.string();
+       }
+-      else if (boost::filesystem::is_directory(p))
++      else if (std::filesystem::is_directory(p))
+       {
+-        for (boost::filesystem::directory_iterator i(p); i != boost::filesystem::directory_iterator(); ++i)
++        for (std::filesystem::directory_iterator i(p); i != std::filesystem::directory_iterator(); ++i)
+         {
+           std::string f = findFileInDirectory(i->path().string(), name, depth-1);
+ 
+diff --git a/src/domino-chain/webos.cpp b/src/domino-chain/webos.cpp
+new file mode 100644
+index 0000000..a41fe81
+--- /dev/null
++++ b/src/domino-chain/webos.cpp
+@@ -0,0 +1,294 @@
++/* Domino-Chain
++ *
++ * Domino-Chain is the legal property of its developers, whose
++ * names are listed in the AUTHORS file, which is included
++ * within the source distribution.
++ *
++ * This program is free software; you can redistribute it and/or
++ * modify it under the terms of the GNU General Public License
++ * as published by the Free Software Foundation; either version 3
++ * of the License, or (at your option) any later version.
++ *
++ * This program is distributed in the hope that it will be useful,
++ * but WITHOUT ANY WARRANTY; without even the implied warranty of
++ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++ * GNU General Public License for more details.
++ *
++ * You should have received a copy of the GNU General Public License
++ * along with this program; if not, write to the Free Software
++ * 51 Franklin Street, Fifth Floor, Boston, MA 02110-1335 USA
++ */
++
++#ifdef WEBOS
++
++#include "webos.h"
++
++#include <SDL_mixer.h>
++
++#include <cstdio>
++#include <cstdlib>
++#include <cstring>
++#include <string>
++
++#include <execinfo.h>
++#include <limits.h>
++#include <signal.h>
++#include <ucontext.h>
++#include <sys/stat.h>
++#include <sys/syscall.h>
++#include <unistd.h>
++
++static bool inBackground = false;
++static bool padHeld[SDL_NUM_SCANCODES];
++static bool padsChanged = true;
++
++// A crash leaves where it happened in the log (the registers, then the backtrace, which on ARM
++// often stops at the signal frame), with where the game and SDL were loaded, to look the
++// addresses up in the unstripped binaries (addr2line)
++static void crashHandler(int sig, siginfo_t * info, void * context)
++{
++  const ucontext_t * uc = (const ucontext_t *)context;
++  fprintf(stderr, "webOS: signal %d at %p: pc %#lx lr %#lx sp %#lx, thread %d of %d\n", sig, info->si_addr,
++    (unsigned long)uc->uc_mcontext.arm_pc, (unsigned long)uc->uc_mcontext.arm_lr,
++    (unsigned long)uc->uc_mcontext.arm_sp, (int)syscall(SYS_gettid), (int)getpid());
++  void * frames[64];
++  const int n = backtrace(frames, 64);
++  backtrace_symbols_fd(frames, n, fileno(stderr));
++  if (FILE * maps = fopen("/proc/self/maps", "r"))
++  {
++    char line[512];
++    while (fgets(line, sizeof(line), maps))
++      if (strstr(line, "r-xp") && (strstr(line, "domino-chain") || strstr(line, ".so")))
++        fputs(line, stderr);
++    fclose(maps);
++  }
++  fflush(stderr);
++  signal(sig, SIG_DFL);
++  raise(sig);
++}
++
++void webOSInit(void)
++{
++  struct sigaction sa;
++  memset(&sa, 0, sizeof(sa));
++  sa.sa_sigaction = crashHandler;
++  sa.sa_flags = SA_SIGINFO;
++  for (int sig : { SIGSEGV, SIGBUS, SIGILL, SIGFPE, SIGABRT })
++    sigaction(sig, &sa, NULL);
++
++  // what the game prints goes to a log, as the app manager drops it
++  if (freopen("/tmp/domino-chain.log", "w", stdout))
++  {
++    dup2(fileno(stdout), fileno(stderr));
++    setvbuf(stdout, NULL, _IOLBF, 0);
++  }
++
++  // the app folder is the executable's
++  char exe[PATH_MAX];
++  ssize_t n = readlink("/proc/self/exe", exe, sizeof(exe) - 1);
++  if (n > 0)
++  {
++    exe[n] = '\0';
++    std::string dir(exe);
++    dir.erase(dir.rfind('/'));
++    if (chdir(dir.c_str()) != 0)
++      perror(dir.c_str());
++
++    // The app runs as its own user, and the app folder is root's: home/ is made writable by
++    // anyone when the app is packaged, and the installer keeps it when the app is updated.
++    std::string home = dir + "/home";
++    mkdir(home.c_str(), 0777);
++    // where the game keeps them, which it makes itself but for its parents
++    mkdir((home + "/.local").c_str(), 0755);
++    mkdir((home + "/.local/share").c_str(), 0755);
++    setenv("HOME", home.c_str(), 1);
++    printf("webOS: app %s, home %s\n", dir.c_str(), home.c_str());
++  }
++
++  // the remote's Back button goes to the game (it is Escape), rather than closing it
++  setenv("SDL_WEBOS_ACCESS_POLICY_KEYS_BACK", "true", 1);
++}
++
++// The game controller's buttons are keys: Cross [A] is Return (choosing in the menus, the action
++// in a level, with Space), Circle [B] and Options [Start] are Escape (back; the level's menu),
++// Triangle [Y] is F1 (help), the D-pad and the left stick the arrows.
++static const struct
++{
++  SDL_GameControllerButton button;
++  SDL_Keycode key;
++  SDL_Scancode scancode;
++} padKeys[] = {
++  { SDL_CONTROLLER_BUTTON_DPAD_UP, SDLK_UP, SDL_SCANCODE_UP },
++  { SDL_CONTROLLER_BUTTON_DPAD_DOWN, SDLK_DOWN, SDL_SCANCODE_DOWN },
++  { SDL_CONTROLLER_BUTTON_DPAD_LEFT, SDLK_LEFT, SDL_SCANCODE_LEFT },
++  { SDL_CONTROLLER_BUTTON_DPAD_RIGHT, SDLK_RIGHT, SDL_SCANCODE_RIGHT },
++  { SDL_CONTROLLER_BUTTON_A, SDLK_RETURN, SDL_SCANCODE_RETURN },
++  { SDL_CONTROLLER_BUTTON_B, SDLK_ESCAPE, SDL_SCANCODE_ESCAPE },
++  { SDL_CONTROLLER_BUTTON_START, SDLK_ESCAPE, SDL_SCANCODE_ESCAPE },
++  { SDL_CONTROLLER_BUTTON_Y, SDLK_F1, SDL_SCANCODE_F1 },
++};
++
++// Makes *e the key event for that key
++static void keyEvent(SDL_Event * e, bool down, SDL_Keycode key, SDL_Scancode scancode)
++{
++  const Uint32 timestamp = e->common.timestamp;
++  SDL_zerop(e);
++  e->type = down ? SDL_KEYDOWN : SDL_KEYUP;
++  e->key.timestamp = timestamp;
++  e->key.state = down ? SDL_PRESSED : SDL_RELEASED;
++  e->key.keysym.sym = key;
++  e->key.keysym.scancode = scancode;
++  padHeld[scancode] = down;
++}
++
++static void setBackground(bool background, const char * why)
++{
++  if (background == inBackground)
++    return;
++  inBackground = background;
++  printf("webOS: %s (%s)\n", background ? "in the background" : "in front again", why);
++  if (background)
++  {
++    Mix_PauseMusic();
++    Mix_Pause(-1);
++  }
++  else
++  {
++    Mix_ResumeMusic();
++    Mix_Resume(-1);
++  }
++}
++
++// Rewrites the events as they are queued: returns 0 to drop one
++static int SDLCALL eventFilter(void *, SDL_Event * e)
++{
++  switch (e->type)
++  {
++    case SDL_KEYDOWN:
++    case SDL_KEYUP:
++      // the remote's Back button is Escape, its red button F1 (help)
++      if (e->key.keysym.scancode == SDL_SCANCODE_WEBOS_BACK || e->key.keysym.sym == SDLK_AC_BACK)
++      {
++        e->key.keysym.sym = SDLK_ESCAPE;
++        e->key.keysym.scancode = SDL_SCANCODE_ESCAPE;
++      }
++      else if (e->key.keysym.scancode == SDL_SCANCODE_WEBOS_RED)
++      {
++        e->key.keysym.sym = SDLK_F1;
++        e->key.keysym.scancode = SDL_SCANCODE_F1;
++      }
++      return 1;
++
++    case SDL_CONTROLLERDEVICEADDED:
++      // opened by webOSPoll, outside SDL's event dispatch, which this filter runs within
++      padsChanged = true;
++      return 0;
++
++    case SDL_CONTROLLERBUTTONDOWN:
++    case SDL_CONTROLLERBUTTONUP:
++      if (inBackground)
++        return 0;
++      for (const auto & k : padKeys)
++        if (k.button == e->cbutton.button)
++        {
++          keyEvent(e, e->type == SDL_CONTROLLERBUTTONDOWN, k.key, k.scancode);
++          return 1;
++        }
++      return 0;
++
++    case SDL_CONTROLLERAXISMOTION:
++    {
++      // the left stick is the arrows, pressed beyond half way and released within a third
++      SDL_Scancode neg, pos;
++      SDL_Keycode negKey, posKey;
++      if (e->caxis.axis == SDL_CONTROLLER_AXIS_LEFTX)
++      {
++        neg = SDL_SCANCODE_LEFT; negKey = SDLK_LEFT; pos = SDL_SCANCODE_RIGHT; posKey = SDLK_RIGHT;
++      }
++      else if (e->caxis.axis == SDL_CONTROLLER_AXIS_LEFTY)
++      {
++        neg = SDL_SCANCODE_UP; negKey = SDLK_UP; pos = SDL_SCANCODE_DOWN; posKey = SDLK_DOWN;
++      }
++      else
++        return 0;
++      if (inBackground)
++        return 0;
++      const int v = e->caxis.value;
++      if (v < -16384 && !padHeld[neg])
++      {
++        padHeld[pos] = false;
++        keyEvent(e, true, negKey, neg);
++        return 1;
++      }
++      if (v > 16384 && !padHeld[pos])
++      {
++        padHeld[neg] = false;
++        keyEvent(e, true, posKey, pos);
++        return 1;
++      }
++      if (v > -10000 && padHeld[neg])
++      {
++        keyEvent(e, false, negKey, neg);
++        return 1;
++      }
++      if (v < 10000 && padHeld[pos])
++      {
++        keyEvent(e, false, posKey, pos);
++        return 1;
++      }
++      return 0;
++    }
++
++    case SDL_WINDOWEVENT:
++      switch (e->window.event)
++      {
++        case SDL_WINDOWEVENT_FOCUS_LOST: setBackground(true, "focus lost"); break;
++        case SDL_WINDOWEVENT_HIDDEN: setBackground(true, "hidden"); break;
++        case SDL_WINDOWEVENT_MINIMIZED: setBackground(true, "minimized"); break;
++        case SDL_WINDOWEVENT_FOCUS_GAINED: setBackground(false, "focus gained"); break;
++        case SDL_WINDOWEVENT_SHOWN: setBackground(false, "shown"); break;
++        case SDL_WINDOWEVENT_RESTORED: setBackground(false, "restored"); break;
++      }
++      return 1;
++
++    case SDL_APP_WILLENTERBACKGROUND:
++    case SDL_APP_DIDENTERBACKGROUND:
++      setBackground(true, "app in the background");
++      return 1;
++
++    case SDL_APP_DIDENTERFOREGROUND:
++      setBackground(false, "app in the foreground");
++      return 1;
++  }
++  return 1;
++}
++
++void webOSInitSDL(void)
++{
++  SDL_SetEventFilter(eventFilter, NULL);
++  if (SDL_InitSubSystem(SDL_INIT_GAMECONTROLLER) != 0)
++    printf("webOS: no game controllers: %s\n", SDL_GetError());
++}
++
++void webOSPoll(void)
++{
++  if (!padsChanged)
++    return;
++  padsChanged = false;
++  for (int i = 0; i < SDL_NumJoysticks(); i++)
++    if (SDL_IsGameController(i) && !SDL_GameControllerFromInstanceID(SDL_JoystickGetDeviceInstanceID(i)))
++      if (SDL_GameController * pad = SDL_GameControllerOpen(i))
++        printf("webOS: game controller %s\n", SDL_GameControllerName(pad));
++}
++
++bool webOSPadHeld(SDL_Scancode scancode)
++{
++  return padHeld[scancode];
++}
++
++bool webOSInBackground(void)
++{
++  return inBackground;
++}
++
++#endif
+diff --git a/src/domino-chain/webos.h b/src/domino-chain/webos.h
+new file mode 100644
+index 0000000..84a7e72
+--- /dev/null
++++ b/src/domino-chain/webos.h
+@@ -0,0 +1,51 @@
++/* Domino-Chain
++ *
++ * Domino-Chain is the legal property of its developers, whose
++ * names are listed in the AUTHORS file, which is included
++ * within the source distribution.
++ *
++ * This program is free software; you can redistribute it and/or
++ * modify it under the terms of the GNU General Public License
++ * as published by the Free Software Foundation; either version 3
++ * of the License, or (at your option) any later version.
++ *
++ * This program is distributed in the hope that it will be useful,
++ * but WITHOUT ANY WARRANTY; without even the implied warranty of
++ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++ * GNU General Public License for more details.
++ *
++ * You should have received a copy of the GNU General Public License
++ * along with this program; if not, write to the Free Software
++ * 51 Franklin Street, Fifth Floor, Boston, MA 02110-1335 USA
++ */
++
++#ifndef __WEBOS_H__
++#define __WEBOS_H__
++
++// LG webOS TVs: the game runs from its app folder, with the remote or a game controller, and
++// goes into the background with the remote's Home button.
++
++#ifdef WEBOS
++
++#include <SDL.h>
++
++// Before anything else: the app folder becomes the working directory (so ./data is found) and its
++// home/ the user's home (the levels solved, the profiles).
++void webOSInit(void);
++
++// After SDL_Init: the event filter that turns the remote's Back and the game controller into keys,
++// and notices the game going into the background and back.
++void webOSInitSDL(void);
++
++// Opens the game controllers connected meanwhile: called from the main loop
++void webOSPoll(void);
++
++// Whether the game controller holds the key with that scancode (the arrows, Return)
++bool webOSPadHeld(SDL_Scancode scancode);
++
++// Whether the game is in the background (the TV shows the launcher or another app)
++bool webOSInBackground(void);
++
++#endif
++
++#endif
+diff --git a/src/domino-chain/window.cpp b/src/domino-chain/window.cpp
+index d88a0ca..e29a32f 100644
+--- a/src/domino-chain/window.cpp
++++ b/src/domino-chain/window.cpp
+@@ -599,7 +599,12 @@ window_c * getMissionWindow(const levelsetList_c & ls, const solvedMap_c & solv,
+         default:
+           assert(0);
+       }
+-      entries.rbegin()->details.push_back(_("Description: ") + _(ls.getLevelset(name).getDescription()));
++      // a description may name the folder the levels are read from (%s: the home folder)
++      std::string description = _(ls.getLevelset(name).getDescription());
++      const std::string::size_type home = description.find("%s");
++      if (home != std::string::npos)
++        description.replace(home, 2, getHome());
++      entries.rbegin()->details.push_back(_("Description: ") + description);
+       entries.rbegin()->details.push_back(_(" Authors: ") + collectAuthors(ls.getLevelset(name)));
+     }
+ 

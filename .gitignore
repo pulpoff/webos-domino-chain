@@ -1,0 +1,7 @@
+/dc-src/
+/build/
+/toolchain
+/output/
+/downloads/
+/prefix/
+__pycache__/
